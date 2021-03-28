@@ -20,7 +20,6 @@ class audio_decoder
 	std::ofstream myfile;
 	PaStream* stream;
 
-
 	void decode_thread(av_data* ad);
 
 	int convert_buffer(av_data* ad, AVFrame* audio_frame, uint8_t** dstBuffer);
@@ -35,4 +34,3 @@ class audio_decoder
 public:
 	audio_decoder(av_data* av);
 };
-

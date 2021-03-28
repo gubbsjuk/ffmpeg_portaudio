@@ -4,7 +4,6 @@
 #include <iostream>
 
 #define RING_BUF_SIZE (1024*2*4)
-//#define RING_BUF_SIZE (262144)
 
 audio_decoder::audio_decoder(av_data* ad)
 {
@@ -62,7 +61,7 @@ void audio_decoder::decode_thread(av_data* ad)
 		{
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
-		
+
 		if (convert)
 			ret = PaUtil_WriteRingBuffer(&ad->audio_buf, *dstBuffer, sampleCount * audio_frame->channels);
 		else
@@ -92,7 +91,7 @@ int audio_decoder::convert_buffer(av_data* ad, AVFrame* audio_frame, uint8_t** d
 	SwrContext* swr = swr_alloc_set_opts(NULL, chLayout, AV_SAMPLE_FMT_FLTP, ad->audio_ctx->sample_rate, chLayout, ad->audio_ctx->sample_fmt, ad->audio_ctx->sample_rate, 0, NULL);
 	if (!swr)
 		std::cout << "Error creating conversion context." << std::endl;
-	
+
 	// Initialize conversion context.
 	ret = swr_init(swr);
 	char errtxt[64];
@@ -103,7 +102,7 @@ int audio_decoder::convert_buffer(av_data* ad, AVFrame* audio_frame, uint8_t** d
 	const int outSampleCount = swr_get_out_samples(swr, audio_frame->nb_samples);
 	if (outSampleCount < 0)
 		std::cout << "Error calculating out-sample-count" << std::endl;
-	
+
 	// Allocated outputbuffer. Try with av_samples_alloc aswell.
 	ret = av_samples_alloc(dstBuffer, &dst_linesize, ad->audio_ctx->channels, outSampleCount, AV_SAMPLE_FMT_FLTP, 1);
 	if (ret < 0)
@@ -169,7 +168,7 @@ PaError audio_decoder::init_port_audio(av_data* ad)
 	outputParameters.sampleFormat = paInt16;
 	outputParameters.suggestedLatency = Pa_GetDeviceInfo(selectedDevice)->defaultLowOutputLatency;
 
-	err = Pa_OpenStream(&stream, NULL, &outputParameters, ad->audio_ctx->sample_rate,paFramesPerBufferUnspecified, paNoFlag, pa_audio_callback, ad);
+	err = Pa_OpenStream(&stream, NULL, &outputParameters, ad->audio_ctx->sample_rate, paFramesPerBufferUnspecified, paNoFlag, pa_audio_callback, ad);
 
 	//err = Pa_OpenDefaultStream(&stream, 0, 1, paInt16, ad->audio_ctx->sample_rate, 1024, pa_audio_callback, &m_audio_buf);
 	if (err != paNoError)	handle_error(err);
@@ -190,7 +189,7 @@ int audio_decoder::pa_audio_callback(const void* inputBuffer, void* outputBuffer
 	if (readAvailable < frameCount)
 		return paContinue;
 
-	PaUtil_ReadRingBuffer(&ad->audio_buf, outputBuffer, frameCount*ad->audio_ctx->channels);
+	PaUtil_ReadRingBuffer(&ad->audio_buf, outputBuffer, frameCount * ad->audio_ctx->channels);
 	return paContinue;
 }
 

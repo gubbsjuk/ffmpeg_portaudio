@@ -33,7 +33,7 @@ void ffmpeg_integration::parse_packets(av_data* ad)
 		if (av_read_frame(ad->pFormatCtx, packet) < 0)
 		{
 			if (ad->pFormatCtx->pb->error == 0) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));  //WTF? 
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));  //WTF?
 				continue;
 			}
 			else {

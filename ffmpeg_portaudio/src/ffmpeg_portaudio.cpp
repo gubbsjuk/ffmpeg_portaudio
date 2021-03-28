@@ -5,21 +5,21 @@
 #include "ffmpeg_integration.h"
 int main()
 {
-    std::cout << "Hello World!\n";
-    ffmpeg_integration ffmpeg("C:/Users/joach/OneDrive/Skrivebord/Arian.wav");
+	std::cout << "Hello World!\n";
+	ffmpeg_integration ffmpeg("C:/Users/joach/OneDrive/Skrivebord/Arian.wav");
 
-    //ugly hack to prevent thread closing
-    while (1)
-    {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    } 
-    return 0;
+	//ugly hack to prevent thread closing
+	while (1)
+	{
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+	}
+	return 0;
 }
 
 // Run program: Ctrl + F5 or Debug > Start Without Debugging menu
 // Debug program: F5 or Debug > Start Debugging menu
 
-// Tips for Getting Started: 
+// Tips for Getting Started:
 //   1. Use the Solution Explorer window to add/manage files
 //   2. Use the Team Explorer window to connect to source control
 //   3. Use the Output window to see build output and other messages
