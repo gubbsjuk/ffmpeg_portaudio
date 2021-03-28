@@ -5,6 +5,8 @@
 
 #define RING_BUF_SIZE (1024*2*4)
 
+//TODO: stop stream after buffer has been emptied.
+
 audio_decoder::audio_decoder(av_data* ad)
 {
 	init_port_audio(ad);
@@ -15,7 +17,7 @@ audio_decoder::audio_decoder(av_data* ad)
 
 void audio_decoder::decode_thread(av_data* ad)
 {
-	AVPacket packet, * pkt = &packet; // TODO: Bedre måte?
+	AVPacket packet, * pkt = &packet;
 	AVFrame* audio_frame = av_frame_alloc();
 	int ret = 0;
 	int sampleCount;
@@ -23,27 +25,24 @@ void audio_decoder::decode_thread(av_data* ad)
 	// main decode loop
 	while (1)
 	{
+		// Better way to do this?
+		if (ad->quit && ad->audio_q.get_nb_packets() < 1)
+		{
+			std::cout << "Done decoding" << std::endl;
+			break;
+		}
+
 		while (ad->audio_q.get_nb_packets() < 1)
 			std::this_thread::sleep_for(std::chrono::milliseconds(10)); //replace with condition?
 
 		ad->audio_q.packet_queue_get(pkt);
 
-		ret = avcodec_send_packet(ad->audio_ctx, pkt);
-
-		ret = avcodec_receive_frame(ad->audio_ctx, audio_frame);
-
-		if (ret == AVERROR(EAGAIN)) {
-			std::cout << "EAGAIN";
+		avcodec_send_packet(ad->audio_ctx, pkt); // Error handling is handled by the avcodec_recieve_frame
+		ret = receive_frame(ad->audio_ctx, audio_frame);
+		if (ret == -1)
 			continue;
-		}
-		else if (ret == AVERROR_EOF) {
-			std::cout << "EOF";
+		else if (ret < -1)
 			break;
-		}
-		else if (ret == AVERROR(EINVAL))
-			std::cout << "codec not opened";
-		else if (ret < 0)
-			std::cout << "legitimate decoding error.";
 
 		sampleCount = audio_frame->nb_samples;
 		//Convert here if needed
@@ -56,7 +55,7 @@ void audio_decoder::decode_thread(av_data* ad)
 				std::cout << "error while converting samples." << std::endl;
 		}
 
-		// Conversion done
+		// Wait until ringbuffer can hold new data.
 		while (PaUtil_GetRingBufferWriteAvailable(&ad->audio_buf) < sampleCount * audio_frame->channels)
 		{
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -68,8 +67,23 @@ void audio_decoder::decode_thread(av_data* ad)
 			ret = PaUtil_WriteRingBuffer(&ad->audio_buf, *audio_frame->extended_data, sampleCount * audio_frame->channels);
 
 		av_frame_unref(audio_frame);
-		//av_freep(dstBuffer);
+		av_free(dstBuffer);
 	}
+	av_frame_free(&audio_frame);
+}
+
+int audio_decoder::receive_frame(AVCodecContext* audio_ctx, AVFrame* audio_frame)
+{
+	int ret = avcodec_receive_frame(audio_ctx, audio_frame);
+	if (ret == AVERROR(EAGAIN))
+		return -1; // output is not available in this state - user must try to send new input
+	else if (ret == AVERROR_EOF)
+		return -2; // the decoder has been fully flushed, and there will be no more output frames
+	else if (ret == AVERROR(EINVAL))
+		return -3; // codec not opened TODO: ASSERT?
+	else if (ret < 0)
+		return -4; // legitimate decoding error.
+	return 0;
 }
 
 int audio_decoder::convert_buffer(av_data* ad, AVFrame* audio_frame, uint8_t** dstBuffer)
@@ -116,9 +130,7 @@ int audio_decoder::convert_buffer(av_data* ad, AVFrame* audio_frame, uint8_t** d
 
 int audio_decoder::init_audio_q(av_data* ad)
 {
-	//PaUtilRingBuffer* audio_buf = (PaUtilRingBuffer*)malloc(sizeof(uint8_t) * RING_BUF_SIZE);
 	int16_t* bufloc = new int16_t[RING_BUF_SIZE];
-
 	PaUtil_InitializeRingBuffer(&ad->audio_buf, sizeof(int16_t), RING_BUF_SIZE, bufloc);
 	return 1;
 }
@@ -131,6 +143,28 @@ PaError audio_decoder::init_port_audio(av_data* ad)
 	err = Pa_Initialize();
 	if (err != paNoError)	handle_error(err);
 
+	int selectedDevice = select_portaudio_device();
+
+	PaStreamParameters outputParameters;
+	outputParameters.channelCount = ad->audio_ctx->channels;
+	outputParameters.device = selectedDevice;
+	outputParameters.hostApiSpecificStreamInfo = NULL;
+	outputParameters.sampleFormat = paInt16;
+	outputParameters.suggestedLatency = Pa_GetDeviceInfo(selectedDevice)->defaultLowOutputLatency;
+
+	err = Pa_OpenStream(&stream, NULL, &outputParameters, ad->audio_ctx->sample_rate, paFramesPerBufferUnspecified, paNoFlag, pa_audio_callback, ad);
+
+	//err = Pa_OpenDefaultStream(&stream, 0, 1, paInt16, ad->audio_ctx->sample_rate, 1024, pa_audio_callback, &m_audio_buf);
+	if (err != paNoError)	handle_error(err);
+	err = Pa_StartStream(stream);
+	if (err != paNoError)	handle_error(err);
+	std::cout << "PortAudio stream started." << std::endl;
+
+	return 1;
+}
+
+int audio_decoder::select_portaudio_device()
+{
 	int devcount = Pa_GetDeviceCount();
 	const PaDeviceInfo* devInfo;
 	const PaHostApiInfo* apiInfo;
@@ -155,26 +189,14 @@ PaError audio_decoder::init_port_audio(av_data* ad)
 	}
 
 	int selectedDevice;
+selectdevice:
 	std::cout << "Select a device ID: ";
 	std::cin >> selectedDevice;
 
-	PaStreamParameters outputParameters;
-	//outputParameters.channelCount = ad->audio_ctx->channels;
-	outputParameters.channelCount = 2;
-	outputParameters.device = selectedDevice;
-	outputParameters.hostApiSpecificStreamInfo = NULL;
-	outputParameters.sampleFormat = paInt16;
-	outputParameters.suggestedLatency = Pa_GetDeviceInfo(selectedDevice)->defaultLowOutputLatency;
+	if (selectedDevice < 0 || selectedDevice > devcount - 1)
+		goto selectdevice;
 
-	err = Pa_OpenStream(&stream, NULL, &outputParameters, ad->audio_ctx->sample_rate, paFramesPerBufferUnspecified, paNoFlag, pa_audio_callback, ad);
-
-	//err = Pa_OpenDefaultStream(&stream, 0, 1, paInt16, ad->audio_ctx->sample_rate, 1024, pa_audio_callback, &m_audio_buf);
-	if (err != paNoError)	handle_error(err);
-	err = Pa_StartStream(stream);
-	if (err != paNoError)	handle_error(err);
-	std::cout << "PortAudio stream started." << std::endl;
-
-	return 1;
+	return selectedDevice;
 }
 
 int audio_decoder::pa_audio_callback(const void* inputBuffer, void* outputBuffer, unsigned long frameCount, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void* userData)
@@ -182,8 +204,10 @@ int audio_decoder::pa_audio_callback(const void* inputBuffer, void* outputBuffer
 	av_data* ad = (av_data*)userData;
 	uint8_t* out = (uint8_t*)outputBuffer;
 	(void)inputBuffer;
-	int readAvailable = PaUtil_GetRingBufferReadAvailable(&ad->audio_buf);
 
+	int readAvailable = PaUtil_GetRingBufferReadAvailable(&ad->audio_buf);
+	if (readAvailable == 0 && ad->audio_q.get_nb_packets() == 0 && ad->quit)
+		return paAbort;
 	if (readAvailable < frameCount)
 		return paContinue;
 

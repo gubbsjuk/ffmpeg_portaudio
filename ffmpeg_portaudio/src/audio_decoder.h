@@ -22,12 +22,23 @@ class audio_decoder
 
 	void decode_thread(av_data* ad);
 
+	/*
+	Returns 0 on success.
+	Returns -1 on EAGAIN
+	returns <-1 on more serious error.
+
+	TODO: Better way of cleaning this up?
+	*/
+	int receive_frame(AVCodecContext* audio_ctx, AVFrame* audio_frame);
+
 	int convert_buffer(av_data* ad, AVFrame* audio_frame, uint8_t** dstBuffer);
 
 	int init_audio_q(av_data* ad);
 
 	PaError init_port_audio(av_data* ad);
+	int select_portaudio_device();
 	void handle_error(PaError err);
+
 
 	static int pa_audio_callback(const void* inputBuffer, void* outputbuffer, unsigned long frameCount, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void* userData);
 
