@@ -67,8 +67,6 @@ void audio_decoder::decode_thread(av_data* ad)
 		else
 			ret = PaUtil_WriteRingBuffer(&ad->audio_buf, *audio_frame->extended_data, sampleCount * audio_frame->channels);
 
-		std::cout << "Wrote " << ret << " samples to ringbuffer. Read available: " << PaUtil_GetRingBufferReadAvailable(&ad->audio_buf) << std::endl;
-
 		av_frame_unref(audio_frame);
 		//av_freep(dstBuffer);
 	}

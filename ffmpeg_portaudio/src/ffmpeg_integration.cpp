@@ -8,14 +8,16 @@ ffmpeg_integration::ffmpeg_integration(const char* filePath)
 	ad->parse_pid = new std::thread(&ffmpeg_integration::parse_packets, this, ad);
 }
 
+ffmpeg_integration::~ffmpeg_integration()
+{
+	avformat_close_input(&ad->pFormatCtx);
+	delete(ad);
+	delete(audio_dec);
+}
+
 void ffmpeg_integration::parse_packets(av_data* ad)
 {
-	AVPacket pkt1, * packet = &pkt1; // Clever way to allocate on stack.
-	ad->pFormatCtx = avformat_alloc_context();
-
-	avformat_open_input(&ad->pFormatCtx, ad->filePath, NULL, NULL);
-	avformat_find_stream_info(ad->pFormatCtx, NULL);
-	av_dump_format(ad->pFormatCtx, 0, ad->filePath, 0);
+	initialize_ffmpeg(ad);
 
 	for (unsigned int i = 0; i < ad->pFormatCtx->nb_streams; i++)
 	{
@@ -26,21 +28,47 @@ void ffmpeg_integration::parse_packets(av_data* ad)
 	if (ad->video_streamID >= 0)	open_stream_components(ad->pFormatCtx, ad->video_streamID);
 	if (ad->audio_streamID >= 0)	open_stream_components(ad->pFormatCtx, ad->audio_streamID);
 
+	read_frames(ad);
+
+	while (!ad->quit)
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+void ffmpeg_integration::initialize_ffmpeg(av_data* ad)
+{
+	ad->pFormatCtx = avformat_alloc_context();
+	avformat_open_input(&ad->pFormatCtx, ad->filePath, NULL, NULL);
+	avformat_find_stream_info(ad->pFormatCtx, NULL);
+
+#ifdef DEBUG
+	av_dump_format(ad->pFormatCtx, 0, ad->filePath, 0);
+#endif // DEBUG
+}
+
+void ffmpeg_integration::read_frames(av_data* ad)
+{
+	AVPacket pkt1, * packet = &pkt1;
+	int ret;
 	while (1)
 	{
-		//SJEKK QSize
-
-		if (av_read_frame(ad->pFormatCtx, packet) < 0)
+		// read frame and errorcheck.
+		ret = av_read_frame(ad->pFormatCtx, packet);
+		if (ret == AVERROR_EOF)
 		{
-			if (ad->pFormatCtx->pb->error == 0) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(100));  //WTF?
-				continue;
-			}
-			else {
-				std::cout << "Error in av_read_frame in decode_thread.\n";
-				break;
-			}
+			std::cout << "End of file met in av_read_frame." << std::endl;
+			goto cleanup;
 		}
+		else if (ret == AVERROR(EAGAIN))
+		{
+			continue;
+		}
+		else if (ret < 0)
+		{
+			std::cout << "Error in av_read_frame in decode_thread." << std::endl;
+			goto cleanup;
+		}
+
+		// Put packet into queue.
 		if (packet->stream_index == ad->video_streamID)
 			ad->video_q.packet_queue_put(packet);
 		else if (packet->stream_index == ad->audio_streamID)
@@ -48,9 +76,9 @@ void ffmpeg_integration::parse_packets(av_data* ad)
 		else
 			av_packet_unref(packet);
 	}
-
-	while (!ad->quit)
-		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+cleanup:
+	ad->quit = true;
+	av_packet_unref(packet);
 }
 
 int ffmpeg_integration::open_stream_components(AVFormatContext* fmt_ctx, int stream_index)
@@ -71,20 +99,17 @@ int ffmpeg_integration::open_stream_components(AVFormatContext* fmt_ctx, int str
 
 	switch (codec_ctx->codec_type) {
 	case AVMEDIA_TYPE_AUDIO:
-		//TODO Better way to do this? going out of scope.
-	{
 		ad->audio_streamID = stream_index;
 		ad->audio_ctx = codec_ctx;
 		PacketQueue::packet_queue_init(&ad->audio_q);
-		audio_decoder* audio_dec = new audio_decoder(ad);
-		break;
-	}
+		audio_dec = new audio_decoder(ad);
+		return 0;
 	case AVMEDIA_TYPE_VIDEO:
 		ad->video_streamID = stream_index;
 		ad->video_ctx = codec_ctx;
 		PacketQueue::packet_queue_init(&ad->video_q);
-		break;
+		return 0;
 	default:
-		break;
+		return -1;
 	}
 }

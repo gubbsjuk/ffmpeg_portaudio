@@ -23,11 +23,6 @@ int PacketQueue::packet_queue_put(AVPacket* pkt)
 		return -1;
 	}
 
-	/* deprecated use av_packet_ref or av_packet_refcounted
-	if (av_dup_packet(pkt) < 0)
-		return -1;
-	*/
-
 	pktList = (AVPacketList*)av_malloc(sizeof(AVPacketList));
 	if (!pktList)
 		return -1;
@@ -72,7 +67,7 @@ int PacketQueue::packet_queue_get(AVPacket* pkt)
 			ret = 1;
 			break;
 		}
-		else if (!BLOCKING) // Når blocking er 0 er dette true, da går den videre. blocking != 0 stuck her.
+		else if (!BLOCKING)
 		{
 			ret = 0;
 			break;
