@@ -17,8 +17,8 @@ extern "C"
 
 class audio_decoder
 {
-	std::ofstream myfile;
 	PaStream* stream;
+	av_data* m_ad;
 
 	void decode_thread(av_data* ad);
 
@@ -37,11 +37,14 @@ class audio_decoder
 
 	PaError init_port_audio(av_data* ad);
 	int select_portaudio_device();
-	void handle_error(PaError err);
-
 
 	static int pa_audio_callback(const void* inputBuffer, void* outputbuffer, unsigned long frameCount, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void* userData);
 
+	void handle_pa_error(PaError err);
+
+	void handle_av_error(int av_error);
+
 public:
 	audio_decoder(av_data* av);
+	~audio_decoder();
 };

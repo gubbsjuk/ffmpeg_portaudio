@@ -7,12 +7,33 @@
 
 //TODO: stop stream after buffer has been emptied.
 
-audio_decoder::audio_decoder(av_data* ad)
+audio_decoder::audio_decoder(av_data* ad) :
+	m_ad(ad)
 {
 	init_port_audio(ad);
 	init_audio_q(ad);
 
+	/*
+	* Get channel layout.
+	* If not specified in ctx, get default for ch count.
+	*/
+	int64_t chLayout = ad->audio_ctx->channel_layout;
+	if (chLayout == 0)
+		chLayout = av_get_default_channel_layout(ad->audio_ctx->channels);
+
+	ad->audio_swr = swr_alloc_set_opts(NULL, chLayout, AV_SAMPLE_FMT_FLT, ad->audio_ctx->sample_rate, chLayout, ad->audio_ctx->sample_fmt, ad->audio_ctx->sample_rate, 0, NULL);
+	if (!ad->audio_swr)
+		return;
+	int ret = swr_init(ad->audio_swr);
+	if (ret < 0)
+		handle_av_error(ret);
+
 	ad->audio_decoder_pid = new std::thread(&audio_decoder::decode_thread, this, ad);
+}
+
+audio_decoder::~audio_decoder()
+{
+	swr_free(&m_ad->audio_swr);
 }
 
 void audio_decoder::decode_thread(av_data* ad)
@@ -40,14 +61,15 @@ void audio_decoder::decode_thread(av_data* ad)
 		avcodec_send_packet(ad->audio_ctx, pkt); // Error handling is handled by the avcodec_recieve_frame
 		ret = receive_frame(ad->audio_ctx, audio_frame);
 		if (ret == -1)
+
 			continue;
 		else if (ret < -1)
 			break;
 
 		sampleCount = audio_frame->nb_samples;
 		//Convert here if needed
-		bool convert = false;
-		uint8_t** dstBuffer = (uint8_t**)av_malloc(sizeof(uint8_t) * 2048);
+		bool convert = true;
+		uint8_t** dstBuffer = (uint8_t**)av_malloc(sizeof(float) * 2048);
 		if (convert)
 		{
 			sampleCount = convert_buffer(ad, audio_frame, dstBuffer);
@@ -91,47 +113,28 @@ int audio_decoder::convert_buffer(av_data* ad, AVFrame* audio_frame, uint8_t** d
 	int ret;
 	int dst_linesize;
 
-	/*
-	* Get channel layout.
-	* If not specified in ctx, get default for ch count.
-	*/
-	int64_t chLayout = ad->audio_ctx->channel_layout;
-	if (chLayout == 0)
-		chLayout = av_get_default_channel_layout(ad->audio_ctx->channels);
-
-	// Allocate conversion context and set options.
-	SwrContext* swr = swr_alloc_set_opts(NULL, chLayout, AV_SAMPLE_FMT_FLTP, ad->audio_ctx->sample_rate, chLayout, ad->audio_ctx->sample_fmt, ad->audio_ctx->sample_rate, 0, NULL);
-	if (!swr)
-		std::cout << "Error creating conversion context." << std::endl;
-
-	// Initialize conversion context.
-	ret = swr_init(swr);
-	char errtxt[64];
-	if (ret < 0)
-		std::cout << av_make_error_string(errtxt, 64, ret);
-
 	// Get samplecount after conversion. (Should be equal when not doing samplerate conversion?)
-	const int outSampleCount = swr_get_out_samples(swr, audio_frame->nb_samples);
+	const int outSampleCount = swr_get_out_samples(ad->audio_swr, audio_frame->nb_samples);
 	if (outSampleCount < 0)
 		std::cout << "Error calculating out-sample-count" << std::endl;
 
 	// Allocated outputbuffer. Try with av_samples_alloc aswell.
-	ret = av_samples_alloc(dstBuffer, &dst_linesize, ad->audio_ctx->channels, outSampleCount, AV_SAMPLE_FMT_FLTP, 1);
+	ret = av_samples_alloc(dstBuffer, &dst_linesize, ad->audio_ctx->channels, outSampleCount, AV_SAMPLE_FMT_FLT, 1);
 	if (ret < 0)
 		std::cout << "Could not allocate destination samples." << std::endl;
 
 	// Convert current frame.
-	ret = swr_convert(swr, dstBuffer, outSampleCount, (const uint8_t**)audio_frame->extended_data, audio_frame->nb_samples);
+	ret = swr_convert(ad->audio_swr, dstBuffer, outSampleCount, (const uint8_t**)audio_frame->extended_data, audio_frame->nb_samples);
 	if (ret < 0)
-		std::cout << av_make_error_string(errtxt, 64, ret);
+		handle_av_error(ret);
 
 	return ret;
 }
 
 int audio_decoder::init_audio_q(av_data* ad)
 {
-	int16_t* bufloc = new int16_t[RING_BUF_SIZE];
-	PaUtil_InitializeRingBuffer(&ad->audio_buf, sizeof(int16_t), RING_BUF_SIZE, bufloc);
+	float* bufloc = new float[RING_BUF_SIZE];
+	PaUtil_InitializeRingBuffer(&ad->audio_buf, sizeof(float), RING_BUF_SIZE, bufloc);
 	return 1;
 }
 
@@ -141,7 +144,7 @@ PaError audio_decoder::init_port_audio(av_data* ad)
 	PaStream* stream;
 
 	err = Pa_Initialize();
-	if (err != paNoError)	handle_error(err);
+	if (err != paNoError)	handle_pa_error(err);
 
 	int selectedDevice = select_portaudio_device();
 
@@ -149,15 +152,15 @@ PaError audio_decoder::init_port_audio(av_data* ad)
 	outputParameters.channelCount = ad->audio_ctx->channels;
 	outputParameters.device = selectedDevice;
 	outputParameters.hostApiSpecificStreamInfo = NULL;
-	outputParameters.sampleFormat = paInt16;
+	outputParameters.sampleFormat = paFloat32;
 	outputParameters.suggestedLatency = Pa_GetDeviceInfo(selectedDevice)->defaultLowOutputLatency;
 
 	err = Pa_OpenStream(&stream, NULL, &outputParameters, ad->audio_ctx->sample_rate, paFramesPerBufferUnspecified, paNoFlag, pa_audio_callback, ad);
 
 	//err = Pa_OpenDefaultStream(&stream, 0, 1, paInt16, ad->audio_ctx->sample_rate, 1024, pa_audio_callback, &m_audio_buf);
-	if (err != paNoError)	handle_error(err);
+	if (err != paNoError)	handle_pa_error(err);
 	err = Pa_StartStream(stream);
-	if (err != paNoError)	handle_error(err);
+	if (err != paNoError)	handle_pa_error(err);
 	std::cout << "PortAudio stream started." << std::endl;
 
 	return 1;
@@ -215,8 +218,14 @@ int audio_decoder::pa_audio_callback(const void* inputBuffer, void* outputBuffer
 	return paContinue;
 }
 
-void audio_decoder::handle_error(PaError err)
+void audio_decoder::handle_pa_error(PaError err)
 {
 	std::cout << "PortAudio encountered an error:" << std::endl;
 	std::cout << Pa_GetErrorText(err) << std::endl;
+}
+
+void audio_decoder::handle_av_error(int av_error)
+{
+	char errtxt[64];
+	std::cout << av_make_error_string(errtxt, 64, av_error);
 }

@@ -1,6 +1,8 @@
 #include "ffmpeg_integration.h"
 #include <iostream>
 
+#define DEBUG
+
 ffmpeg_integration::ffmpeg_integration(const char* filePath)
 {
 	ad = new av_data();
