@@ -40,6 +40,7 @@ void audio_decoder::decode_thread(av_data* ad)
 {
 	AVPacket packet, * pkt = &packet;
 	AVFrame* audio_frame = av_frame_alloc();
+	uint8_t** dstBuffer = (uint8_t**)av_malloc(sizeof(float) * 2048);
 	int ret = 0;
 	int sampleCount;
 
@@ -68,13 +69,14 @@ void audio_decoder::decode_thread(av_data* ad)
 
 		sampleCount = audio_frame->nb_samples;
 		//Convert here if needed
-		bool convert = true;
-		uint8_t** dstBuffer = (uint8_t**)av_malloc(sizeof(float) * 2048);
-		if (convert)
+		if (ad->audio_ctx->sample_fmt != AV_SAMPLE_FMT_FLT)
 		{
 			sampleCount = convert_buffer(ad, audio_frame, dstBuffer);
 			if (sampleCount < 0)
 				std::cout << "error while converting samples." << std::endl;
+		}
+		else {
+			dstBuffer = audio_frame->extended_data;
 		}
 
 		// Wait until ringbuffer can hold new data.
@@ -83,14 +85,11 @@ void audio_decoder::decode_thread(av_data* ad)
 			std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		}
 
-		if (convert)
-			ret = PaUtil_WriteRingBuffer(&ad->audio_buf, *dstBuffer, sampleCount * audio_frame->channels);
-		else
-			ret = PaUtil_WriteRingBuffer(&ad->audio_buf, *audio_frame->extended_data, sampleCount * audio_frame->channels);
+		ret = PaUtil_WriteRingBuffer(&ad->audio_buf, *dstBuffer, sampleCount * audio_frame->channels);
 
 		av_frame_unref(audio_frame);
-		av_free(dstBuffer);
 	}
+	av_free(dstBuffer);
 	av_frame_free(&audio_frame);
 }
 
@@ -119,7 +118,7 @@ int audio_decoder::convert_buffer(av_data* ad, AVFrame* audio_frame, uint8_t** d
 		std::cout << "Error calculating out-sample-count" << std::endl;
 
 	// Allocated outputbuffer. Try with av_samples_alloc aswell.
-	ret = av_samples_alloc(dstBuffer, &dst_linesize, ad->audio_ctx->channels, outSampleCount, AV_SAMPLE_FMT_FLT, 1);
+	ret = av_samples_alloc(dstBuffer, &dst_linesize, ad->audio_ctx->channels, outSampleCount, AV_SAMPLE_FMT_FLT, 1); // TODO: Fix memory-leak. Is this the cause?
 	if (ret < 0)
 		std::cout << "Could not allocate destination samples." << std::endl;
 
