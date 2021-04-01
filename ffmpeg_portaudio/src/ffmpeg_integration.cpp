@@ -104,7 +104,7 @@ int ffmpeg_integration::open_stream_components(AVFormatContext* fmt_ctx, int str
 		ad->audio_streamID = stream_index;
 		ad->audio_ctx = codec_ctx;
 		PacketQueue::packet_queue_init(&ad->audio_q);
-		audio_dec = new audio_decoder(ad);
+		audio_dec = new audio_decoder(ad, 48000);
 		return 0;
 	case AVMEDIA_TYPE_VIDEO:
 		ad->video_streamID = stream_index;
