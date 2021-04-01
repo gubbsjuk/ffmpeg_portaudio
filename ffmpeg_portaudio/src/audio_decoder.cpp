@@ -4,8 +4,6 @@
 #include <stdint.h>
 #include <iostream>
 
-#define RING_BUF_SIZE (1024*2*4)
-
 //TODO: stop stream after buffer has been emptied.
 
 audio_decoder::audio_decoder(av_data* ad, int deviceSampleRate) :
