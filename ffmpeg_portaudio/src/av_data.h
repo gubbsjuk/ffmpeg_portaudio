@@ -13,4 +13,5 @@ struct av_data {
 	AVCodecContext* audio_ctx;
 	AVCodecContext* video_ctx;
 	PaUtilRingBuffer audio_buf;
+	struct SwrContext* audio_swr;
 };
